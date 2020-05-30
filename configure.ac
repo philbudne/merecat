@@ -7,6 +7,7 @@ AM_INIT_AUTOMAKE([1.11 foreign no-dist-gzip dist-xz])
 AM_SILENT_RULES([yes])
 
 # Use pkg-config to check for some deps; libConfuse, libssl
+# PLB OFF 2020-05-30. pkg-config requires ruby?
 PKG_PROG_PKG_CONFIG
 
 # Checks for programs.
@@ -113,13 +114,15 @@ AS_IF([test "x${WEBDIR}" = "x"], [
 
 AS_IF([test "x$with_config" != "xno"], [
 	AC_DEFINE([HAVE_LIBCONFUSE], [1], [Build with support for /etc/merecat.conf])
-	PKG_CHECK_MODULES([confuse], [libconfuse >= 2.7])])
+# PLB OFF 2020-05-30. pkg-config requires ruby?
+#	PKG_CHECK_MODULES([confuse], [libconfuse >= 2.7])])
 AM_CONDITIONAL([HAVE_CONFUSE], [test "x$with_config" != "xno"])
 
 AM_CONDITIONAL([CREATE_SYMLINKS], [test "x$with_symlinks" != "xno"])
 
 AS_IF([test "x$with_ssl" != "xno"], [
-	PKG_CHECK_MODULES([OpenSSL], [openssl >= 1.1.1])
+# PLB OFF 2020-05-30. pkg-config requires ruby?
+#	PKG_CHECK_MODULES([OpenSSL], [openssl >= 1.1.1])
 	LDFLAGS="$LDFLAGS $OpenSSL_LIBS"
 	CPPFLAGS="$CPPFLAGS $OpenSSL_CFLAGS"
 	AC_CHECK_LIB([crypto], [EVP_EncryptInit], [],
@@ -156,8 +159,9 @@ AM_CONDITIONAL([ENABLE_SSL], test "x$with_ssl" = "xyes")
 
 AS_IF([test "x$with_zlib" != "xno"], [
 	AC_CHECK_HEADERS([zlib.h])
-	AS_IF([test "x$ac_cv_header_zlib_h" = "xyes" -o "x$with_zlib" = "xyes"], [
-		PKG_CHECK_MODULES([zlib], [zlib >= 1.2.3.4])])
+# PLB OFF 2020-05-30. pkg-config requires ruby?
+#	AS_IF([test "x$ac_cv_header_zlib_h" = "xyes" -o "x$with_zlib" = "xyes"], [
+#		PKG_CHECK_MODULES([zlib], [zlib >= 1.2.3.4])])
 ])
 
 # Check where to install the systemd .service file
