@@ -478,7 +478,7 @@ size_t  strlcat (char *dst, const char *src, size_t len);
 
 /* Vogon poetry generator */
 #ifndef HAVE_BACKTRACE
-#define stacktrace()
+#define stack_trace()
 #else
 void    stack_trace(void);
 #endif
