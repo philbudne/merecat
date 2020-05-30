@@ -10,7 +10,9 @@ SYMLINK             = httpd
 merecat_CFLAGS      = -fPIC -W -Wall -Wextra -std=gnu99
 merecat_CFLAGS     += -Wno-unused-result -Wno-unused-parameter -Wno-unused-variable
 merecat_CFLAGS     += $(zlib_CFLAGS)
-merecat_CPPFLAGS    = -D_POSIX_SOURCE -D_BSD_SOURCE -D_GNU_SOURCE -D_DEFAULT_SOURCE
+# PLB (un)crock for FreeBSD
+#merecat_CPPFLAGS   = -D_POSIX_SOURCE -D_BSD_SOURCE -D_GNU_SOURCE -D_DEFAULT_SOURCE
+merecat_CPPFLAGS    =
 merecat_CPPFLAGS   += -DCONFDIR='"$(sysconfdir)"' -DLOCALSTATEDIR='"$(localstatedir)"'
 merecat_CPPFLAGS   += -DRUNDIR='"$(runstatedir)"'
 merecat_LDADD       = libmatch.a $(zlib_LIBS)
