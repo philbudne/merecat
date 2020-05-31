@@ -194,6 +194,7 @@ int conf_srv(struct srv arr[], size_t len)
 		arr[i].host  = cfg_getstr(srv, "hostname");
 		arr[i].port  = cfg_getint(srv, "port");
 		arr[i].path  = cfg_getstr(srv, "path");
+		arr[i].logfile = cfg_getstr(srv, "logfile"); /* optional */
 
 		conf_ssl(&arr[i], srv);
 		conf_redirect(&arr[i], srv);
@@ -247,6 +248,7 @@ static int read_config(char *fn)
 		CFG_SEC ("location", location_opts, CFGF_MULTI | CFGF_TITLE),
 		CFG_SEC ("ssl",      ssl_opts, CFGF_MULTI),
 		CFG_SEC ("redirect", redirect_opts, CFGF_MULTI | CFGF_TITLE),
+		CFG_STR ("logfile",  NULL, CFGF_NONE),
 		CFG_END ()
 	};
 	cfg_opt_t opts[] = {

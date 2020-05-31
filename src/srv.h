@@ -44,6 +44,7 @@ struct srv {
 	char      *certfile;
 	char      *keyfile;
 	char      *dhfile;
+	char      *logfile;
 
 	struct {
 		char *pattern;	/* Pattern to match() against */

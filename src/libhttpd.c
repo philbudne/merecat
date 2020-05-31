@@ -1,3 +1,6 @@
+#define HAVE_TM_GMTOFF		 // XXX TEMP
+#define LOG_CLOSE_CONN		 // thttpd-2.25b style
+
 /* libhttpd.c - HTTP protocol library
 **
 ** Copyright (C) 1995-2015  Jef Poskanzer <jef@mail.acme.com>
@@ -711,7 +714,9 @@ void httpd_send_response(struct http_conn *hc)
 
 	/* Send the response, if necessary. */
 	if (hc->responselen > 0) {
+#ifndef LOG_CLOSE_CONN
 		make_log_entry(hc);
+#endif
 		httpd_write(hc, hc->response, hc->responselen);
 		hc->responselen = 0;
 	}
@@ -2185,6 +2190,9 @@ static char *expand_symlinks(char *path, char **trailer, int no_symlink_check, i
 
 void httpd_close_conn(struct http_conn *hc, struct timeval *now)
 {
+#ifdef LOG_CLOSE_CONN
+	make_log_entry(hc);	/* per thttpd-2.25b */
+#endif
 	if (hc->file_address) {
 		mmc_unmap(hc->file_address, &(hc->sb), now);
 		hc->file_address = NULL;
@@ -4772,6 +4780,12 @@ static void make_log_entry(struct http_conn *hc)
 	if (hc->hs->no_log)
 		return;
 
+	// PLB: suppress empty entries (from EOF on idle connection?)
+	if (hc->method == METHOD_UNKNOWN && hc->status == 0 &&
+	    hc->bytes_sent == 0 && strcmp(hc->protocol, "UNKNOWN") == 0) {
+		return;
+	}
+
 	/* This is straight CERN Combined Log Format - the only tweak
 	** being that if we're using syslog() we leave out the date, because
 	** syslogd puts it in.  The included syslogtocern script turns the
@@ -4799,6 +4813,55 @@ static void make_log_entry(struct http_conn *hc)
 	else
 		strcpy(bytes, "-");
 
+	if (hc->hs->logfile) {
+	    // from thttpd-2.25b
+	    time_t now;
+	    struct tm* t;
+	    const char* cernfmt_nozone = "%d/%b/%Y:%H:%M:%S";
+	    char date_nozone[100];
+	    int zone;
+	    char sign;
+	    char date[100];
+
+	    if (!hc->hs->logfp) {
+		printf("opening %s\n", hc->hs->logfile); /* XXX TEMP */
+		hc->hs->logfp = fopen(hc->hs->logfile, "a");
+		if (!hc->hs->logfp) {
+		    syslog(LOG_ERR, "error opening %s: %m", hc->hs->logfile);
+		    return;
+		}
+	    }
+	    time(&now);
+	    /* Format the time, forcing a numeric timezone (some log analyzers
+	    ** are stoooopid about this).
+	    */
+	    t = localtime( &now );
+	    (void) strftime( date_nozone, sizeof(date_nozone), cernfmt_nozone, t );
+#ifdef HAVE_TM_GMTOFF
+	    zone = t->tm_gmtoff / 60L;
+#else
+	    zone = -timezone / 60L;
+	    /* Probably have to add something about daylight time here. */
+#endif
+	    if ( zone >= 0 )
+		sign = '+';
+	    else
+	    {
+		sign = '-';
+		zone = -zone;
+	    }
+	    zone = ( zone / 60 ) * 100 + zone % 60;
+	    (void) snprintf( date, sizeof(date),
+			     "%s %c%04d", date_nozone, sign, zone );
+	    printf("log: %s\n", url); /* XXX PLB TEMP */
+	    /* And write the log entry. */
+	    (void) fprintf( hc->hs->logfp,
+			    "%.80s - %.80s [%s] \"%.80s %.300s %.80s\" %d %s \"%.200s\" \"%.200s\"\n",
+			    httpd_client(hc), ru, date,
+			    httpd_method_str( hc->method ), url, hc->protocol,
+			    hc->status, bytes, hc->referer, hc->useragent );
+	    return;
+	}
 	syslog(LOG_INFO, "%.80s: %s \"%s %.200s %s\" %d %s \"%.200s\" \"%.200s\"",
 	       httpd_client(hc), ru, httpd_method_str(hc->method), url, hc->protocol,
 	       hc->status, bytes, hc->referer, hc->useragent);
@@ -5089,4 +5152,11 @@ void httpd_logstats(long secs)
 
 	syslog(LOG_INFO, "  libhttpd - %d strings allocated, %lu bytes (%g bytes/str)",
 	       str_alloc_count, (unsigned long)str_alloc_size, (float)str_alloc_size / str_alloc_count);
+}
+
+void httpd_close_logfile(struct httpd *hc) {
+    if (hc->logfp) {
+	fclose(hc->logfp);
+	hc->logfp = NULL;
+    }
 }

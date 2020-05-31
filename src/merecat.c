@@ -1715,9 +1715,12 @@ int main(int argc, char **argv)
 		int got = 0;
 
 		/* Do we need to re-open the log file? */
-		if (got_hup)
+		if (got_hup) {
+			LIST_FOREACH(server, server_list) {
+				httpd_close_logfile(server);
+			}
 			got_hup = 0;
-
+		}
 		/* Do the fd watch. */
 		num_ready = fdwatch(tmr_mstimeout(&tv));
 		if (num_ready < 0) {

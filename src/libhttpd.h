@@ -163,6 +163,9 @@ struct httpd {
 	struct http_location *location;
 
 	void *ctx;		/* Opaque SSL_CTX* */
+
+	char *logfile;
+	FILE *logfp;
 };
 
 /* A connection. */
@@ -410,6 +413,9 @@ extern void httpd_logstats(long secs);
 /* Track PID of CGI scripts, server calls untrack for each collected PID */
 extern int httpd_cgi_track(struct httpd *hs, pid_t pid);
 extern int httpd_cgi_untrack(struct httpd *hs, pid_t pid);
+
+/* close direct logfile (if any) */
+extern void httpd_close_logfile(struct httpd *hc);
 
 /*
 ** Default CSS used in error pages

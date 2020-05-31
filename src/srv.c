@@ -208,6 +208,7 @@ struct httpd *srv_init(struct srv *srv)
 	if (httpd_listen(hs, gotv4 ? &sa4 : NULL, gotv6 ? &sa6 : NULL))
 		goto err;
 
+	hs->logfile = srv->logfile;
 	return hs;
 release:
 	srv_exit(hs);
