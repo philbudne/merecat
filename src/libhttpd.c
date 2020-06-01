@@ -1,5 +1,10 @@
-#define HAVE_TM_GMTOFF		 // XXX TEMP
-#define LOG_CLOSE_CONN		 // thttpd-2.25b style
+#define HAVE_TM_GMTOFF		// need custom autoconf goo!
+
+//#define LOG_CLOSE_CONN	// thttpd-2.25b style
+//#define LOG_SEND_RESPONSE 	// merecat default
+#define LOG_SEND_RESPONSE_ALWAYS // ONLY CGIs?!
+#define LOG_SEND_MIME		// all files, no CGI
+#define LOG_FFLUSH
 
 /* libhttpd.c - HTTP protocol library
 **
@@ -713,8 +718,11 @@ void httpd_send_response(struct http_conn *hc)
 		(void)httpd_clear_ndelay(hc->conn_fd);
 
 	/* Send the response, if necessary. */
+#ifdef LOG_SEND_RESPONSE_ALWAYS
+	make_log_entry(hc);
+#endif
 	if (hc->responselen > 0) {
-#ifndef LOG_CLOSE_CONN
+#ifdef LOG_SEND_RESPONSE // merecat default
 		make_log_entry(hc);
 #endif
 		httpd_write(hc, hc->response, hc->responselen);
@@ -770,6 +778,14 @@ send_mime(struct http_conn *hc, int status, char *title, char *encodings,
 
 	hc->status = status;
 	hc->bytes_to_send = length;
+#ifdef LOG_SEND_MIME
+	{
+	    off_t saved_sent = hc->bytes_sent;
+	    hc->bytes_sent = length;
+	    make_log_entry(hc);
+	    hc->bytes_sent = saved_sent;
+	}
+#endif
 	if (hc->mime_flag) {
 		char nowbuf[100];
 		char modbuf[100];
@@ -2191,7 +2207,7 @@ static char *expand_symlinks(char *path, char **trailer, int no_symlink_check, i
 void httpd_close_conn(struct http_conn *hc, struct timeval *now)
 {
 #ifdef LOG_CLOSE_CONN
-	make_log_entry(hc);	/* per thttpd-2.25b */
+	make_log_entry(hc);	// thttpd-2.25b way
 #endif
 	if (hc->file_address) {
 		mmc_unmap(hc->file_address, &(hc->sb), now);
@@ -4781,6 +4797,7 @@ static void make_log_entry(struct http_conn *hc)
 		return;
 
 	// PLB: suppress empty entries (from EOF on idle connection?)
+	// XXX not needed with merecat default?
 	if (hc->method == METHOD_UNKNOWN && hc->status == 0 &&
 	    hc->bytes_sent == 0 && strcmp(hc->protocol, "UNKNOWN") == 0) {
 		return;
@@ -4853,13 +4870,16 @@ static void make_log_entry(struct http_conn *hc)
 	    zone = ( zone / 60 ) * 100 + zone % 60;
 	    (void) snprintf( date, sizeof(date),
 			     "%s %c%04d", date_nozone, sign, zone );
-	    printf("log: %s\n", url); /* XXX PLB TEMP */
 	    /* And write the log entry. */
 	    (void) fprintf( hc->hs->logfp,
 			    "%.80s - %.80s [%s] \"%.80s %.300s %.80s\" %d %s \"%.200s\" \"%.200s\"\n",
 			    httpd_client(hc), ru, date,
 			    httpd_method_str( hc->method ), url, hc->protocol,
 			    hc->status, bytes, hc->referer, hc->useragent );
+#ifdef LOG_FFLUSH
+	    printf("log: %s %s %d %s\n", httpd_method_str(hc->method), url, hc->status, bytes); /* XXX PLB TEMP */
+	    fflush(hc->hs->logfp);
+#endif
 	    return;
 	}
 	syslog(LOG_INFO, "%.80s: %s \"%s %.200s %s\" %d %s \"%.200s\" \"%.200s\"",
