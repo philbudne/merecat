@@ -1,10 +1,14 @@
+#define THTTPD_EXPAND_SYMLINKS
+#define THTTPD_EXECUTABLE_NON_CGI
+#define THTTPD_VHOST_IN_CGI_PAT
 #define HAVE_TM_GMTOFF		// need custom autoconf goo!
 
 //#define LOG_CLOSE_CONN	// thttpd-2.25b style
 //#define LOG_SEND_RESPONSE 	// merecat default
-#define LOG_SEND_RESPONSE_ALWAYS // ONLY CGIs?!
-#define LOG_SEND_MIME		// all files, no CGI
-#define LOG_FFLUSH
+#define LOG_SEND_RESPONSE_ALWAYS // errs, ls, CGI (no files)
+#define LOG_SEND_MIME		// files, errs, ls, no CGI
+//#define LOG_PRINTF		// debugging
+#define LOG_FFLUSH		// debugging
 
 /* libhttpd.c - HTTP protocol library
 **
@@ -1975,7 +1979,6 @@ static int vhost_map(struct http_conn *hc)
 	httpd_realloc_str(&hc->hostdir, &hc->maxhostdir, strlen(hc->hostname) + 1);
 	strlcpy(hc->hostdir, hc->hostname, hc->maxhostdir);
 #endif /* VHOST_DIRLEVELS */
-
 	/* Prepend hostdir to the filename. */
 	len  = strlen(hc->expnfilename);
 	temp = strdup(hc->expnfilename);
@@ -1990,7 +1993,6 @@ static int vhost_map(struct http_conn *hc)
 	strlcat(hc->expnfilename, "/", hc->maxexpnfilename);
 	strlcat(hc->expnfilename, temp, hc->maxexpnfilename);
 	free(temp);
-
 	return 1;
 }
 
@@ -2003,6 +2005,227 @@ static int vhost_map(struct http_conn *hc)
 ** This is a fairly nice little routine.  It handles any size filenames
 ** without excessive mallocs.
 */
+#ifdef THTTPD_EXPAND_SYMLINKS
+static char*
+expand_symlinks( char* path, char** restP, int no_symlink_check, int tildemapped )
+    {
+    static char* checked;
+    static char* rest;
+    char link[5000];
+    static size_t maxchecked = 0, maxrest = 0;
+    size_t checkedlen, restlen, prevcheckedlen, prevrestlen;
+    ssize_t linklen;			/* PLB */
+    int nlinks, i;
+    char* r;
+    char* cp1;
+    char* cp2;
+
+    if ( no_symlink_check )
+	{
+	/* If we are chrooted, we can actually skip the symlink-expansion,
+	** since it's impossible to get out of the tree.  However, we still
+	** need to do the pathinfo check, and the existing symlink expansion
+	** code is a pretty reasonable way to do this.  So, what we do is
+	** a single stat() of the whole filename - if it exists, then we
+	** return it as is with nothing in restP.  If it doesn't exist, we
+	** fall through to the existing code.
+	**
+	** One side-effect of this is that users can't symlink to central
+	** approved CGIs any more.  The workaround is to use the central
+	** URL for the CGI instead of a local symlinked one.
+	*/
+	struct stat sb;
+	if ( stat( path, &sb ) != -1 )
+	    {
+	    checkedlen = strlen( path );
+	    httpd_realloc_str( &checked, &maxchecked, checkedlen );
+	    (void) strcpy( checked, path );
+	    /* Trim trailing slashes. */
+	    while ( checked[checkedlen - 1] == '/' )
+		{
+		checked[checkedlen - 1] = '\0';
+		--checkedlen;
+		}
+	    httpd_realloc_str( &rest, &maxrest, 0 );
+	    rest[0] = '\0';
+	    *restP = rest;
+	    return checked;
+	    }
+	}
+
+    /* Start out with nothing in checked and the whole filename in rest. */
+    httpd_realloc_str( &checked, &maxchecked, 1 );
+    checked[0] = '\0';
+    checkedlen = 0;
+    restlen = strlen( path );
+    httpd_realloc_str( &rest, &maxrest, restlen );
+    (void) strcpy( rest, path );
+    if ( rest[restlen - 1] == '/' )
+	rest[--restlen] = '\0';         /* trim trailing slash */
+    if ( ! tildemapped )
+	/* Remove any leading slashes. */
+	while ( rest[0] == '/' )
+	    {
+	    (void) strcpy( rest, &(rest[1]) );
+	    --restlen;
+	    }
+    r = rest;
+    nlinks = 0;
+
+    /* While there are still components to check... */
+    while ( restlen > 0 )
+	{
+	/* Save current checkedlen in case we get a symlink.  Save current
+	** restlen in case we get a non-existant component.
+	*/
+	prevcheckedlen = checkedlen;
+	prevrestlen = restlen;
+
+	/* Grab one component from r and transfer it to checked. */
+	cp1 = strchr( r, '/' );
+	if ( cp1 != (char*) 0 )
+	    {
+	    i = cp1 - r;
+	    if ( i == 0 )
+		{
+		/* Special case for absolute paths. */
+		httpd_realloc_str( &checked, &maxchecked, checkedlen + 1 );
+		(void) strncpy( &checked[checkedlen], r, 1 );
+		checkedlen += 1;
+		}
+	    else if ( strncmp( r, "..", MAX( i, 2 ) ) == 0 )
+		{
+		/* Ignore ..'s that go above the start of the path. */
+		if ( checkedlen != 0 )
+		    {
+		    cp2 = strrchr( checked, '/' );
+		    if ( cp2 == (char*) 0 )
+			checkedlen = 0;
+		    else if ( cp2 == checked )
+			checkedlen = 1;
+		    else
+			checkedlen = cp2 - checked;
+		    }
+		}
+	    else
+		{
+		httpd_realloc_str( &checked, &maxchecked, checkedlen + 1 + i );
+		if ( checkedlen > 0 && checked[checkedlen-1] != '/' )
+		    checked[checkedlen++] = '/';
+		(void) strncpy( &checked[checkedlen], r, i );
+		checkedlen += i;
+		}
+	    checked[checkedlen] = '\0';
+	    r += i + 1;
+	    restlen -= i + 1;
+	    }
+	else
+	    {
+	    /* No slashes remaining, r is all one component. */
+	    if ( strcmp( r, ".." ) == 0 )
+		{
+		/* Ignore ..'s that go above the start of the path. */
+		if ( checkedlen != 0 )
+		    {
+		    cp2 = strrchr( checked, '/' );
+		    if ( cp2 == (char*) 0 )
+			checkedlen = 0;
+		    else if ( cp2 == checked )
+			checkedlen = 1;
+		    else
+			checkedlen = cp2 - checked;
+		    checked[checkedlen] = '\0';
+		    }
+		}
+	    else
+		{
+		httpd_realloc_str(
+		    &checked, &maxchecked, checkedlen + 1 + restlen );
+		if ( checkedlen > 0 && checked[checkedlen-1] != '/' )
+		    checked[checkedlen++] = '/';
+		(void) strcpy( &checked[checkedlen], r );
+		checkedlen += restlen;
+		}
+	    r += restlen;
+	    restlen = 0;
+	    }
+
+	/* Try reading the current filename as a symlink */
+	if ( checked[0] == '\0' )
+	    continue;
+	linklen = readlink( checked, link, sizeof(link) - 1 );
+	if ( linklen == -1 )
+	    {
+	    if ( errno == EINVAL )
+		continue;               /* not a symlink */
+	    if ( errno == EACCES || errno == ENOENT || errno == ENOTDIR )
+		{
+		/* That last component was bogus.  Restore and return. */
+		*restP = r - ( prevrestlen - restlen );
+		if ( prevcheckedlen == 0 )
+		    (void) strcpy( checked, "." );
+		else
+		    checked[prevcheckedlen] = '\0';
+		return checked;
+		}
+	    syslog( LOG_ERR, "readlink %.80s - %m", checked );
+	    return (char*) 0;
+	    }
+	++nlinks;
+	if ( nlinks > MAX_LINKS )
+	    {
+	    syslog( LOG_ERR, "too many symlinks in %.80s", path );
+	    return (char*) 0;
+	    }
+	link[linklen] = '\0';
+	if ( link[linklen - 1] == '/' )
+	    link[--linklen] = '\0';     /* trim trailing slash */
+
+	/* Insert the link contents in front of the rest of the filename. */
+	if ( restlen != 0 )
+	    {
+	    (void) strcpy( rest, r );
+	    httpd_realloc_str( &rest, &maxrest, restlen + linklen + 1 );
+	    for ( i = restlen; i >= 0; --i )
+		rest[i + linklen + 1] = rest[i];
+	    (void) strcpy( rest, link );
+	    rest[linklen] = '/';
+	    restlen += linklen + 1;
+	    r = rest;
+	    }
+	else
+	    {
+	    /* There's nothing left in the filename, so the link contents
+	    ** becomes the rest.
+	    */
+	    httpd_realloc_str( &rest, &maxrest, linklen );
+	    (void) strcpy( rest, link );
+	    restlen = linklen;
+	    r = rest;
+	    }
+
+	if ( rest[0] == '/' )
+	    {
+	    /* There must have been an absolute symlink - zero out checked. */
+	    checked[0] = '\0';
+	    checkedlen = 0;
+	    }
+	else
+	    {
+	    /* Re-check this component. */
+	    checkedlen = prevcheckedlen;
+	    checked[checkedlen] = '\0';
+	    }
+	}
+
+    /* Ok. */
+    *restP = r;
+    if ( checked[0] == '\0' )
+	(void) strcpy( checked, "." );
+    return checked;
+    }
+
+#else
 static char *expand_symlinks(char *path, char **trailer, int no_symlink_check, int tildemapped)
 {
 	static char *checked;
@@ -2202,7 +2425,7 @@ static char *expand_symlinks(char *path, char **trailer, int no_symlink_check, i
 
 	return checked;
 }
-
+#endif
 
 void httpd_close_conn(struct http_conn *hc, struct timeval *now)
 {
@@ -4442,6 +4665,7 @@ static int is_cgi(struct http_conn *hc)
 	assert(hc->hs);
 
 	fn = hc->expnfilename;
+#ifndef THTTPD_VHOST_IN_CGI_PAT
 	if (hc->hs->vhost) {
 		int len;
 		char buf[256];
@@ -4452,6 +4676,8 @@ static int is_cgi(struct http_conn *hc)
 	}
 
 	/* With the vhost prefix out of the way we can match CGI patterns */
+#endif
+
 	if (hc->hs->cgi_pattern && match(hc->hs->cgi_pattern, fn))
 		return 1;
 
@@ -4741,8 +4967,19 @@ sneaky:
 					  "is forbidden.\n"), hc->encodedurl);
 		return -1;
 	}
+#ifdef THTTPD_EXECUTABLE_NON_CGI
+	if ( hc->sb.st_mode & S_IXOTH ) {
+		syslog(LOG_NOTICE, "%.80s URL \"%s\" (%s) is executable but isn't CGI", httpd_client(hc), hc->encodedurl, hc->expnfilename );
+		httpd_send_err(hc, 403, err403title, "",
+			       ERROR_FORM(err403form,
+					  "The requested URL '%.80s' resolves to a file which is marked executable but is not a CGI file.\n"),
+			       hc->encodedurl );
+		return -1;
+	}
+#endif
 
 	if (hc->pathinfo[0] != '\0') {
+	    printf("TEMP: URL \"%s\" has pathinfo \"%s\" but isn't CGI", hc->encodedurl, hc->pathinfo);
 		syslog(LOG_INFO, "%.80s URL \"%s\" has pathinfo but isn't CGI", httpd_client(hc), hc->encodedurl);
 		httpd_send_err(hc, 403, err403title, "",
 			       ERROR_FORM(err403form,
@@ -4876,8 +5113,10 @@ static void make_log_entry(struct http_conn *hc)
 			    httpd_client(hc), ru, date,
 			    httpd_method_str( hc->method ), url, hc->protocol,
 			    hc->status, bytes, hc->referer, hc->useragent );
-#ifdef LOG_FFLUSH
+#ifdef LOG_PRINTF
 	    printf("log: %s %s %d %s\n", httpd_method_str(hc->method), url, hc->status, bytes); /* XXX PLB TEMP */
+#endif
+#ifdef LOG_FFLUSH
 	    fflush(hc->hs->logfp);
 #endif
 	    return;
